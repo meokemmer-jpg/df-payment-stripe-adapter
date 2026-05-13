@@ -1,0 +1,159 @@
+# DF-PAYMENT-STRIPE-ADAPTER Configuration [CRUX-MK]
+# Welle-53 Real-API-Wave-1 Top-5-Priority Foundation-DF
+# Stripe Payment API Adapter (frei nutzbar, Stripe-Test-Mode default)
+
+df_id: DF-PAYMENT-STRIPE-ADAPTER
+df_name: payment-stripe-adapter
+version: 0.1.0-SKELETON
+status: SKELETON-CONDITIONAL
+crux-mk: true
+
+description: |
+  Real-API-Adapter fuer Stripe Payment Intents + Webhooks (HMAC-SHA256).
+  Pro Payment-Operation: POST /v1/payment_intents + POST /v1/refunds + Webhook-Verify.
+  ENV-Var-Gated Default-Disabled. KEIN Real-Charge ohne PHRONESIS_TICKET (Production).
+  Test-Mode (sk_test_*) erlaubt ohne Phronesis fuer Dev/Sandbox.
+
+# === Default-Action (per ausreden-schutz.md Schicht 2) ===
+
+default_action:
+  description: "Stripe Payment-Intent create/confirm + Webhook-HMAC-Verify mit Tenant-Isolation"
+  rho_per_run_eur: 100
+  rho_validation_source: unvalidated
+  block_gates:
+    - gate_id: K13_PAV
+      block_reason: "K_0-Echtgeld: Live-Charges nur mit PHRONESIS_TICKET Martin"
+      false_block_cost_eur: 100
+      legitimate_block_condition: "Mode=live UND PHRONESIS_TICKET fehlt"
+    - gate_id: K11
+      block_reason: "Cross-Tenant-Charge-Read verboten ohne Tenant-Isolation"
+      false_block_cost_eur: 150
+      legitimate_block_condition: "Tenant-Context (hotel_id) fehlt"
+  graceful_degradation_path: "Mock-PaymentIntent mit standard-Test-Charge-ID"
+
+# === Tier-2 Pflicht-Check ===
+
+tier_2_check:
+  lambda_per_month_estimate: 500  # ~17/Tag Buchungen
+  narrow_scope: "Stripe API (Payment-Intents + Refunds + Webhooks) test+live"
+  determinism: 0.92
+  rollback_seconds: 30
+  test_coverage_target: 0.85
+  k0_protected: true
+  q0_measurable: true
+  escalation_after_n_fails: 3
+  rho_budget_eur_day: 5
+  audit_trail: branch-hub/audit/df-payment-stripe-adapter.jsonl
+
+# === K11-K16 ===
+
+k11_cascade_containment:
+  cascade_isolation: hard
+  failure_blast_radius: 1
+  dependency_dlq_strategy: "skip-payment-resume-naechste + jsonl-log + replay-protection"
+
+k12_distillation_resistenz:
+  output_feeds_into_training: false
+  provenance_required_in_output: true
+  non_llm_validation_layer: "Amount-Range-Check + Currency-Whitelist + Idempotency-Key-Uniqueness"
+
+k13_independent_ground_truth:
+  external_anchor_type: "stripe_api_dashboard + github_api"
+  external_anchor_validation_frequency: "weekly (Webhook-Health-Check)"
+  pre_action_domain_check:
+    env_tag: "test|live via STRIPE_API_KEY-Praefix (sk_test_ vs sk_live_)"
+    mount_point: "branch-hub/payments/stripe/hotels/"
+    network_region: "stripe-global"
+  pre_action_backup_check:
+    backup_status: "Idempotency-Keys persistent in SQLite"
+    replication_lag: "n/a"
+  pre_action_blast_radius_check:
+    blast_radius: "max 1 Charge pro Run (Idempotency-isoliert)"
+    reversibility_class: "non-reversible fuer Live-Charge (Refund-Pflicht), state-only fuer Test"
+
+k14_human_override_decay:
+  override_complexity: requires_specialist
+  override_documentation_freshness_days: 7
+  martin_review_cadence: pro Live-Mode-Aktivierung
+  bus_factor_handover_drilled: false
+
+k15_entropy_budget:
+  entropy_added_loc_estimate: 300
+  entropy_added_concepts:
+    - StripeAdapter
+    - PaymentIntentRequest
+    - WebhookHmacVerifier
+    - IdempotencyKeyStore
+  entropy_justified_by_rho: "Payment-Integration = K_0 (Buchungs-Umsatz Hotel)"
+  entropy_subtractive_potential: "ersetzt manuelle Stripe-Dashboard-Bedienung"
+
+k16_concurrent_spawn_mutex:
+  concurrent_spawn_protection: both
+  lock_dir: /tmp/df-payment-stripe-adapter.lock
+  lock_stale_age_h: 6
+  engine_pgrep_check: true
+  lock_release_on: EXIT_INT_TERM
+
+# === LC1-LC5 ===
+
+lose_coupling:
+  LC1_graceful_degradation:
+    degradation_modes:
+      - full              # Live + Webhook aktiv
+      - degraded_webhook  # nur API, kein Webhook-Receiver
+      - degraded_test_mode # nur Stripe-Test
+      - standalone        # Mock-Adapter
+    degradation_test_required: true
+
+  LC2_direct_mode:
+    direct_mode_available: true
+    direct_mode_capability: 0.85
+    direct_mode_trigger: "Stripe-API-Timeout >30s oder 429-Rate-Limit"
+
+  LC3_circuit_breaker:
+    circuit_breaker_timeout_s: 30
+    circuit_breaker_open_threshold: 3
+    circuit_breaker_half_open_test_interval_s: 300
+
+  LC4_failure_isolation:
+    state_externalization: true
+    idempotent_operations: true
+    dependency_dlq_separate: true
+
+  LC5_health_check:
+    health_check_dependencies: []
+    health_check_degraded_score: 0.7
+    health_check_endpoint_or_file: /tmp/df-payment-stripe-adapter-health.json
+
+# === ENV-Var-Gated Real-Integration ===
+
+env_var_gating:
+  DF_STRIPE_REAL_ENABLED: false  # Default Mock
+  PHRONESIS_TICKET_REQUIRED: true # bei Live-Mode Pflicht (sk_live_*)
+  default_mode: mock
+
+# === Operatives ===
+
+operations:
+  output_path: ~/Projects/dark-factories/df-payment-stripe-adapter/
+  state_file: ~/.df-payment-stripe-adapter/state.json
+  jsonl_audit_path: branch-hub/audit/df-payment-stripe-adapter.jsonl
+  stop_flag_path: /tmp/df-payment-stripe-adapter.stop
+  health_file_path: /tmp/df-payment-stripe-adapter-health.json
+  schedule: "On-demand (per Booking-Event)"
+
+# === rho-Schaetzung ===
+
+rho_estimate:
+  annual_eur: 60000
+  reason: "Stripe-Payment-Integration ohne OTA-Kommission 18%"
+  schwer_quantifizierbar: false
+  rho_validation_source: unvalidated
+
+# === CRUX-Bindung ===
+
+crux_bindung:
+  K_0: "Echtgeld-Charge-Pfad, PHRONESIS-Gate Live-Mode Pflicht"
+  Q_0: "Payment-Integrity (Idempotency + HMAC-Verify)"
+  I_min: "strukturierte Stripe-Adapter-Pipeline (300 LOC + Tests)"
+  W_0: "Manuelle Stripe-Dashboard-Zeit reduziert"
