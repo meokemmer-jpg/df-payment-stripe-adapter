@@ -3,3 +3,11 @@ __pycache__/
 .pytest_cache/
 *.db
 .DS_Store
+*.env
+.env
+*.sqlite
+*.sqlite3
+*.key
+*.pem
+secrets.json
+credentials.json
